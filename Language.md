@@ -14,6 +14,9 @@ Function definition:
 
 ```
 hello = `(console 'hello, world' log)
+hello
 ```
+
+This example will print `hello, world`.
 
 hello = `(`true `(console 'hello, world' log)) match
