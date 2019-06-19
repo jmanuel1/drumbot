@@ -2,6 +2,8 @@ import React from 'react';
 import './DrumMachine.css';
 import { fetch } from 'whatwg-fetch';
 import AudioEngine, {browserSupportsWebAudio } from './AudioEngine';
+import {CodeLexer, CodeParser, CodeCompiler} from './DrumMachineLanguage';
+
 const apiHost = process.env.REACT_APP_API_HOST || 'https://api.noopschallenge.com';
 
 export default class DrumMachine extends React.Component {
@@ -25,10 +27,14 @@ export default class DrumMachine extends React.Component {
     }
   }
 
-  powerOn = () => {
+  powerOn = (isOffline) => {
     this.audioEngine = new AudioEngine({ onStep: this.onStep});
-    this.audioEngine.prepare().then(() =>
-      fetch(`${apiHost}/drumbot/patterns`).then(r => r.json()).then(
+    this.audioEngine.prepare().then(() => {
+      if (isOffline === true) { // specific check for true is on purpose
+        return Promise.resolve(this.setState({ patterns: [], poweredOn: true, error: false }));
+      }
+
+      return fetch(`${apiHost}/drumbot/patterns`).then(r => r.json()).then(
         patterns => {
           this.setState({ patterns, poweredOn: true }, () => {
             const randomIndex = Math.floor(Math.random() * patterns.length);
@@ -38,7 +44,7 @@ export default class DrumMachine extends React.Component {
         err => {
           this.setState({ error: 'Oops. Something went wrong. Please check your connection and refresh your browser.', loading: false });
         }
-    ), error => {
+    )}, error => {
       this.setState({ error: true, loading: false });
     });
   }
@@ -69,7 +75,7 @@ export default class DrumMachine extends React.Component {
     }
 
 
-    fetch(`${apiHost}/drumbot/patterns/${pattern.name}`).then(r => r.json()).then(
+    return fetch(`${apiHost}/drumbot/patterns/${pattern.name}`).then(r => r.json()).then(
       pattern => {
         this.setState({ pattern, patternIndex: index, loading: false });
         this.audioEngine.setPattern(pattern);
@@ -85,11 +91,31 @@ export default class DrumMachine extends React.Component {
     this.selectPattern(this.state.patternIndex - 1);
   }
 
+  runCode = (event) => {
+    const code = document.querySelector('#codeTextArea').value;
+    const outputElement = document.querySelector('#outputArea');
+    console.debug(`Code: ${code}`);
+    const tokens = new CodeLexer().lex(code);
+    console.debug('Tokens:', tokens);
+
+    const ast = new CodeParser(tokens).parse();
+    console.debug('AST:', ast);
+    const program = new CodeCompiler().compile(ast);
+    console.debug('Program: ', program);
+    program.run(this, (stdout) => {
+      outputElement.innerText = stdout;
+    }, (error) => {
+      console.debug(error);
+    });
+  }
+
   render() {
 
     if (this.state.error) return (
       <div className='DrumMachine__Error'>
         {this.state.error}
+        Or, start the machine offline.
+        <button name='startOffline' className='DrumMachine__StartStopButton' onClick={() => this.powerOn(true)}>Start offline!</button>
       </div>
     );
 
@@ -150,6 +176,15 @@ export default class DrumMachine extends React.Component {
               </div>
             </div>
           ))}
+        </div>
+
+        { /* Add a textarea */ }
+        <div>
+          <textarea id="codeTextArea"></textarea>
+          <button name="run" onClick={this.runCode}>Run code</button>
+          <pre>
+            <code id="outputArea"></code>
+          </pre>
         </div>
 
         <div className='DrumMachine__Footer'>
