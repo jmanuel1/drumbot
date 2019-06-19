@@ -105,8 +105,13 @@ export default class DrumMachine extends React.Component {
     program.run(this, (stdout) => {
       outputElement.innerText = stdout;
     }, (error) => {
-      console.debug(error);
+      console.error(error);
     });
+  }
+
+  // Define how to stringify because a private property of the component contains the component
+  toJSON = () => {
+    return {state: this.state};
   }
 
   render() {
