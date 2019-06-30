@@ -123,6 +123,8 @@ export class CodeLexer {
         return 'equals';
       case '`':
         return 'backtick';
+      case '(':
+        return 'lparen';
       default:
         return null;
     }
@@ -182,7 +184,7 @@ export class CodeParser {
           tlRoot.children.push(this.parseLiteral());
           break;
         default:
-          throw DrumMachineSyntaxError();
+          tlRoot.children.push(this.parseWord());
       }
     }
 
@@ -209,7 +211,7 @@ export class CodeParser {
       case 'string':
         return this.parseLiteral();
       default:
-        throw DrumMachineSyntaxError();
+        throw new DrumMachineSyntaxError();
     }
   }
 
@@ -255,7 +257,7 @@ export class CodeParser {
   }
 
   hasNextWord() {
-    return this._tokens.length > 0 && new Set(['identifier', 'string']).has(this._tokens[0].type);
+    return this._tokens.length > 0 && new Set(['identifier', 'string', 'backtick']).has(this._tokens[0].type);
   }
 
   consume(type) {
@@ -271,34 +273,12 @@ export class CodeParser {
 class DrumMachineSyntaxError extends SyntaxError {}
 
 export class CodeCompiler {
-  constructor() {
-    this._program = [];
-  }
-
-  compile(ast) {
-    const visitor = new ASTVisitor(ast);
-    [
-      'top-level->_onTopLevel',
-      'function-call->_onCall',
-      'literal->_onLiteral',
-      'quote->_onQuote',
-      'assignment->_onAssign'
-    ].forEach((handler) => {
-      const [type, fnName] = handler.split('->');
-      console.debug(type, fnName);
-      visitor.addHandler(type, (node) => this[fnName](node));
-    });
-    this._visitor = visitor;
-    visitor.visit();
-    return new Program(...this._program);
-  }
-
-  _onTopLevel(node) {
-    const pushDrumMachine = (state) => {
+  static _builtins = {
+    'drum-machine': (state) => {
       const drumMachine = state.context;
       return {...state, stack: [...state.stack, drumMachine]};
-    }
-    const playPattern = (state) => {
+    },
+    pattern: (state) => {
       const stack = [...state.stack];
       const pattern = stack.pop(), machine = stack.pop();
       const patterns = machine.state.patterns.map(({ name }) => name);
@@ -310,33 +290,90 @@ export class CodeCompiler {
         machine.startClock();
       }));
       return {...state, stack};
-    }
-    const pushConsole = (state) => {
+    },
+    console: (state) => {
       // we won't use the real console object
       const fakeConsole = {log: (state, str) => {return {...state, stdout: state.stdout + str}}}
 
       return {...state, stack: [...state.stack, fakeConsole]}
-    }
-    const log = (state) => {
+    },
+    log: (state) => {
       const stack = [...state.stack];
       const str = stack.pop(), consoleObj = stack.pop();
       return {...state, ...consoleObj.log({...state, stack}, str)};
-    }
-    const displayPatterns = (state) => {
+    },
+    patterns: (state) => {
       const stack = [...state.stack];
       const machine = stack.pop();
       const patterns = machine.state.patterns.map(({ name }) => name);
       const out = patterns.toString();
       return {...state, stack, stdout: state.stdout + out};
+    },
+    'match-function': (state) => {
+      const stack = [...state.stack];
+      const func = stack.pop();
+      const matches = [];
+
+      console.debug('Function to become a match function:', func);
+
+      for (let i = 0; i < func.length; i += 2) {
+        const pattern = func[i]({...state, stack: []}).stack;
+        const result = func[i + 1];
+        matches.push({pattern, result});
+      }
+
+      console.debug('Pattern matches:', matches);
+
+      const matchingFunction = new PatternMatchFunction(matches);
+
+      stack.push(matchingFunction);
+      return {...state, stack};
+    },
+    'extend-match-function': (state) => {
+      const stack = [...state.stack];
+      const [extension, func] = [stack.pop(), stack.pop()];
+      const matches = [];
+
+      for (let i = 0; i < extension.length; i += 2) {
+        const pattern = extension[i]({...state, stack: []}).stack;
+        const result = extension[i + 1];
+        matches.push({pattern, result});
+      }
+
+      func.extendWith(matches);
+      return {...state, stack};
     }
+  }
+
+  constructor() {
+    this._program = [];
+  }
+
+  compile(ast) {
+    const visitor = new ASTVisitor(ast);
+    [
+      'top-level->_onTopLevel',
+      'function-call->_onCall',
+      'literal->_onLiteral',
+      'quote->_onQuote',
+      'assignment->_onAssign',
+      'list->_onList'
+    ].forEach((handler) => {
+      const [type, fnName] = handler.split('->');
+      console.debug(type, fnName);
+      visitor.addHandler(type, (node) => this[fnName](node));
+    });
+    this._visitor = visitor;
+    visitor.visit();
+    return new Program(...this._program);
+  }
+
+  _onTopLevel(node) {
+    console.debug('Adding builtins:', this.constructor._builtins);
     this._program.push((state) => {
       return {...state, scope: {
         ...state.scope,
-        'drum-machine': pushDrumMachine,
-        'pattern': playPattern,
-        'patterns': displayPatterns,
-        'console': pushConsole,
-        log
+        ...this.constructor._builtins
       }};
     });
   }
@@ -345,11 +382,12 @@ export class CodeCompiler {
     if (node.children[0].type === 'name') {
       const name = node.children[0].content;
       this._program.push((state) => {
-        return state.scope[name](state);
+        const thisArg = {};
+        return state.scope[name].call(thisArg, state);
       });
       return;
     }
-    throw DrumMachineCompileError();
+    throw new DrumMachineCompileError();
   }
 
   _onAssign(node) {
@@ -365,14 +403,35 @@ export class CodeCompiler {
     });
   }
 
+  _onList(node) {
+    const contents = [];
+    const actualProgram = this._program;
+    this._program = contents;
+    node.children.forEach((child) => {
+      this._visitor.visit(child);
+      child.doNotVisit = true;
+    });
+    this._program = actualProgram;
+    this._program.push((state) => {
+      return new Quote(...contents).call({}, state);
+    });
+  }
+
   _onQuote(node) {
     const word = node.children[0];
     if (word.type === 'list') {
       this._program.push(this._quotedList(word));
       word.doNotVisit = true;
       return;
+    } else if (word.type === 'function-call') {
+      this._program.push((state) => {
+        // push something from scope directly onto the stack
+        return {...state, stack: [...state.stack, state.scope[word.children[0].content]]};
+      });
+      word.doNotVisit = true;
+      return;
     }
-    throw DrumMachineCompileError();
+    throw new DrumMachineCompileError();
   }
 
   _quotedList(node) {
@@ -386,7 +445,11 @@ export class CodeCompiler {
     subvisitor.addHandler('literal', (node) => {
       this._onLiteral(node);
     });
-    subvisitor.visit();
+    subvisitor.addHandler('list', (node) => {
+      this._onList(node);
+    });
+    // skip the root of the list
+    node.children.forEach((child) => subvisitor.visit(child));
     // restore actual program
     const quote = this._program;
     this._program = actualProgram;
@@ -402,7 +465,7 @@ export class CodeCompiler {
         value = node.content;
         break;
       default:
-        throw DrumMachineCompileError();
+        throw new DrumMachineCompileError();
     }
     this._program.push((state) => {
       return {...state, stack: [...state.stack, value]};
@@ -411,8 +474,37 @@ export class CodeCompiler {
 }
 
 class Quote extends Array {
-  call(state) {
-    return this.reduce((state, word) => word(state), state);
+  call(thisArg, state) {
+    return this.reduce((state, word) => word.call(thisArg, state), state);
+  }
+}
+
+class PatternMatchFunction extends Function {
+  constructor(matches) {
+    super();
+    this._matches = matches;
+  }
+
+  call(thisArg, state) {
+    for (const match of this._matches) {
+      let doesMatch = true;
+      for (let i = match.pattern.length - 1, j = 1; i >= 0; i--, j++) {
+        const element = match.pattern[i];
+        if (state.stack[state.stack.length - j] !== element) {
+          doesMatch = false;
+        }
+      }
+      if (doesMatch) {
+        return match.result(state);
+      }
+    }
+
+    // no match
+    throw new DrumMachineNoMatchError({state});
+  }
+
+  extendWith(matches) {
+    this._matches = this._matches.concat(matches);
   }
 }
 
@@ -453,9 +545,10 @@ class Program extends Array {
       // the core of the executor
       finalState = this.reduce((state, nextStep) => {
         try {
+          console.debug('Current state:', state);
           return nextStep(state);
         } catch (err) {
-          throw new DrumMachineRuntimeError({originalError: err, state});
+          throw err instanceof DrumMachineRuntimeError ? err : new DrumMachineRuntimeError({originalError: err, state});
         }
       }, state);
       // output
@@ -472,7 +565,8 @@ class DrumMachineRuntimeError extends Error {
     this.originalError = originalError;
     this.state = state;
     console.debug(this.state);
-    this.message = (`Original error: ${JSON.stringify(this.originalError)}\n` +
+    console.debug('Original error:', originalError);
+    this.message = (`Original error: ${(this.originalError)}\n` +
       `State at time of error: ${JSON.stringify(this.state)}`);
   }
 
@@ -481,3 +575,5 @@ class DrumMachineRuntimeError extends Error {
   //     `State at time of error: ${JSON.stringify(this.state)}`);
   // }
 }
+
+class DrumMachineNoMatchError extends DrumMachineRuntimeError {}
