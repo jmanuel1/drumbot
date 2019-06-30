@@ -1,8 +1,8 @@
 import React from 'react';
 import './DrumMachine.css';
 import { fetch } from 'whatwg-fetch';
-import AudioEngine, {browserSupportsWebAudio } from './AudioEngine';
-import {CodeLexer, CodeParser, CodeCompiler} from './DrumMachineLanguage';
+import AudioEngine, { browserSupportsWebAudio } from './AudioEngine';
+import { CodeLexer, CodeParser, CodeCompiler } from './DrumMachineLanguage';
 
 const apiHost = process.env.REACT_APP_API_HOST || 'https://api.noopschallenge.com';
 
@@ -42,7 +42,9 @@ export default class DrumMachine extends React.Component {
           });
         },
         err => {
-          this.setState({ error: 'Oops. Something went wrong. Please check your connection and refresh your browser.', loading: false });
+          this.setState({
+            error: 'Oops. Something went wrong. Please check your connection and refresh your browser.', loading: false
+          });
         }
     )}, error => {
       this.setState({ error: true, loading: false });
@@ -54,6 +56,7 @@ export default class DrumMachine extends React.Component {
 
     this.setState({ playing: true });
   }
+
   stopClock = () => {
     this.audioEngine.stopClock();
 
@@ -120,7 +123,10 @@ export default class DrumMachine extends React.Component {
       <div className='DrumMachine__Error'>
         {this.state.error}
         Or, start the machine offline.
-        <button name='startOffline' className='DrumMachine__StartStopButton' onClick={() => this.powerOn(true)}>Start offline!</button>
+        <button name='startOffline' className='DrumMachine__StartStopButton'
+          onClick={() => this.powerOn(true)}>
+          Start offline!
+        </button>
       </div>
     );
 
@@ -162,8 +168,14 @@ export default class DrumMachine extends React.Component {
                 </div>
               </div>
               <div className='DrumMachine__Transport'>
-                <button disabled={this.state.playing} className='DrumMachine__StartStopButton' onClick={this.startClock}>Start</button>
-                <button disabled={!this.state.playing} className='DrumMachine__StartStopButton' onClick={this.stopClock}>Stop</button>
+                <button disabled={this.state.playing}
+                  className='DrumMachine__StartStopButton' onClick={this.startClock}>
+                  Start
+                </button>
+                <button disabled={!this.state.playing}
+                  className='DrumMachine__StartStopButton' onClick={this.stopClock}>
+                  Stop
+                </button>
               </div>
             </>
           )}
@@ -175,7 +187,14 @@ export default class DrumMachine extends React.Component {
               <div className='DrumMachine__TrackLabel'>{track.instrument}</div>
               <div className='DrumMachine__TrackSteps'>
                 {track.steps.map((trackStep, i) => (
-                  <div className={`DrumMachine__Step DrumMachine__Step--${step === i ? 'Active' : 'Inactive'} DrumMachine__Step--${trackStep ? 'On' : 'Off'}`} key={i}>
+                  <div
+                    className={
+                      `DrumMachine__Step
+                      DrumMachine__Step--${step === i ? 'Active' : 'Inactive'}
+                      DrumMachine__Step--${trackStep ? 'On' : 'Off'}`
+                    }
+                    key={i}
+                  >
                   </div>
                 ))}
               </div>
